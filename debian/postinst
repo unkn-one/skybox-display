@@ -1,6 +1,0 @@
-#!/bin/sh
-set -e
-if [ "$1" = "configure" ]; then
-    systemctl daemon-reload || true
-    systemctl enable skybox-display.service || true
-fi

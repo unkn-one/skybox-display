@@ -1,88 +1,42 @@
-                                                                 # Makefile for skybox-display (.deb with bundled virtualenv via dh-virtualenv)
+PKG := skybox-display
 
-PKG        := skybox-display
-SERVICE    := $(PKG)
-
-# Derived versions
-PY_VERSION      := $(shell python3 scripts/version.py show)
-DEB_BASE_VER    := $(shell python3 scripts/version.py debian)
-DEB_VERSION     := $(DEB_BASE_VER)-1
-
-# Tools
-DCH          := dch
-DPKG_BUILD   := dpkg-buildpackage
-APT          := sudo apt-get
-INSTALL_DEB  := sudo apt-get install -y
-
-# ---------- Phony ----------
-.PHONY: all info deps clean distclean changelog deb package install uninstall \
-        reinstall bump-major bump-minor bump-patch service-start service-stop \
-        service-restart service-status logs
+.PHONY: all info deps clean distclean deb install uninstall reinstall \
+        bump-patch bump-minor bump-major docker-image docker-deb docker-deb-arm64 \
+        service-start service-stop service-restart service-status logs
 
 all: deb
 
 info:
-	@echo "Package      : $(PKG)"
-	@echo "PEP440 ver   : $(PY_VERSION)"
-	@echo "Debian ver   : $(DEB_VERSION)"
+	@echo "PEP440: $$(python3 scripts/version.py show)"
+	@echo "Debian: $$(python3 scripts/version.py debian)-1"
+	@echo "Desc  : $$(python3 scripts/version.py desc)"
 
 deps:
-	@echo "[deps] Installing packaging toolchain"
-	$(APT) update
-	$(APT) install -y build-essential debhelper devscripts dh-virtualenv python3-all python3 python3-venv python3-pip git
-	@echo "[deps] (optional) setuptools-scm for local 'show' without CI"
-	pip3 install -q --upgrade setuptools-scm || true
+	sudo apt-get update
+	sudo apt-get install -y python3-dev python3-venv python3-pip git dpkg-dev build-essential make
+	# convenience for dynamic versioning
+	pip3 install -U setuptools-scm tomli || true
 
 clean:
-	@echo "[clean] Removing build artifacts"
-	rm -rf build dist *.egg-info
-	rm -f ../$(PKG)_* || true
-	find . -name '__pycache__' -type d -exec rm -rf {} +
+	rm -rf build
 
 distclean: clean
-	@echo "[distclean] Done"
 
-# Ensure changelog matches DEB_VERSION
-changelog:
-	@test -d debian || (echo "Missing debian/ directory" && exit 1)
-	@if [ -f debian/changelog ]; then \
-	  CUR=$$(dpkg-parsechangelog -S Version || true); \
-	  if [ "$$CUR" != "$(DEB_VERSION)" ]; then \
-	    echo "[changelog] Updating $$CUR -> $(DEB_VERSION)"; \
-	    DEBEMAIL="$${DEBEMAIL:-$$USER@localhost}" DEBFULLNAME="$${DEBFULLNAME:-$$(git config user.name || echo 'CI Builder')}" \
-	    $(DCH) --newversion "$(DEB_VERSION)" --distribution bookworm \
-	           "Sync changelog to version $(PY_VERSION)."; \
-	  else \
-	    echo "[changelog] Already at $(DEB_VERSION)"; \
-	  fi \
-	else \
-	  echo "[changelog] Creating initial changelog at $(DEB_VERSION)"; \
-	  DEBEMAIL="$${DEBEMAIL:-$$USER@localhost}" DEBFULLNAME="$${DEBFULLNAME:-$$(git config user.name || echo 'CI Builder')}" \
-	  $(DCH) --create --package $(PKG) --newversion "$(DEB_VERSION)" \
-	         --distribution bookworm "Initial changelog for $(PY_VERSION)."; \
-	fi
-
-# Build unsigned binary .deb
-deb package: changelog
-	@echo "[build] Building $(PKG) $(DEB_VERSION)"
-	$(DPKG_BUILD) -us -uc -b
-	@echo "[build] Result(s):"
-	@ls -lh ../$(PKG)_*_*\.deb
+deb:
+	bash scripts/build_deb.sh
 
 install: deb
-	@debfile=$$(ls -1 ../$(PKG)_*_*\.deb | head -n1); \
-	echo "[install] Installing $$debfile"; \
-	$(INSTALL_DEB) "$$debfile"; \
-	echo "[install] Enabling & starting service"; \
-	sudo systemctl enable --now $(SERVICE).service
+	@debfile=$$(ls -1 build/$(PKG)_*_*\.deb | head -n1); \
+	echo "[install] $$debfile"; \
+	sudo apt-get install -y "$$debfile"; \
+	sudo systemctl enable --now $(PKG).service
 
 uninstall:
-	- sudo systemctl disable --now $(SERVICE).service
+	- sudo systemctl disable --now $(PKG).service
 	- sudo apt-get remove -y $(PKG)
 
 reinstall: uninstall install
 
-# -------- Version bumps (create annotated git tag vX.Y.Z) --------
 bump-patch:
 	@python3 scripts/version.py bump patch
 
@@ -92,18 +46,32 @@ bump-minor:
 bump-major:
 	@python3 scripts/version.py bump major
 
+# -------- Dockerized build (no host pollution) --------
+docker-image:
+	docker build -t $(PKG)-builder -f Dockerfile .
+
+docker-deb: docker-image
+	docker run --rm -v "$$PWD":/work -w /work \
+		-e DEBFULLNAME="$$(git config user.name || echo CI Builder)" \
+		-e DEBEMAIL="$$(git config user.email || echo ci@example.com)" \
+		$(PKG)-builder make deb
+
+# build for arm64 on capable Docker (QEMU) hosts:
+docker-deb-arm64: docker-image
+	docker run --rm --platform=linux/arm64 -v "$$PWD":/work -w /work \
+		-e ARCH=arm64 \
+		-e DEBFULLNAME="$$(git config user.name || echo CI Builder)" \
+		-e DEBEMAIL="$$(git config user.email || echo ci@example.com)" \
+		$(PKG)-builder make deb
+
 # -------- Service helpers --------
 service-start:
-	sudo systemctl start $(SERVICE).service
-
+	sudo systemctl start $(PKG).service
 service-stop:
-	sudo systemctl stop $(SERVICE).service
-
+	sudo systemctl stop $(PKG).service
 service-restart:
-	sudo systemctl restart $(SERVICE).service
-
+	sudo systemctl restart $(PKG).service
 service-status:
-	systemctl status $(SERVICE).service
-
+	systemctl status $(PKG).service
 logs:
-	journalctl -u $(SERVICE).service -e -n 200 -f
+	journalctl -u $(PKG).service -e -n 200 -f
