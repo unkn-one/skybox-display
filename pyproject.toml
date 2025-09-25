@@ -1,0 +1,33 @@
+[project]
+name = "skybox-display"
+version = "0.1.0"
+authors = [{ name = "Unknown One", email = "1350272+unkn-one@users.noreply.github.com" }]
+description = "A lightweight UI for dump1090 that runs on Raspberry Pi."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "evdev>=1.9.2",
+    "gpiozero>=2.0.1",
+    "inotify-simple>=2.0.1",
+    "numpy>=2.3.3",
+    "pillow>=11.3.0",
+    "psutil>=7.1.0",
+    "pyrtlsdr>=0.3.0",
+    "pyyaml>=6.0.2",
+    "requests>=2.32.5",
+    "rpi-gpio>=0.7.1",
+    "smbus2>=0.5.0",
+]
+[project.scripts]
+skybox-display = "skybox_display.main:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+# Produce nice, Debian-friendly versions:
+version_scheme = "guess-next-dev"
+local_scheme   = "no-local-version"   # avoid "+gHASH"
+write_to = "skybox_display/_version.py"
+write_to_template = "__version__ = \"{version}\"\n"

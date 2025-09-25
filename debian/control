@@ -1,0 +1,20 @@
+Source: skybox-display
+Section: utils
+Priority: optional
+Maintainer: Unknown One <1350272+unkn-one@users.noreply.github.com>
+Standards-Version: 4.7.0
+Build-Depends:
+ debhelper-compat (= 13),
+ dh-virtualenv,
+ python3-all,
+ python3-venv,
+ build-essential,
+ pkg-config,
+ git
+Homepage: https://github.com/unkn-one/skybox-display
+
+Package: skybox-display
+Architecture: arm64
+Depends: ${misc:Depends}
+Enhances: dump1090-fa, dump1090
+Description: A lightweight UI for dump1090 that runs on Raspberry Pi

@@ -1,0 +1,87 @@
+name: Build .deb (arm64 / aarch64)
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Let setuptools-scm see tags
+
+      - name: Build on aarch64 (Debian bookworm)
+        uses: uraimo/run-on-arch-action@v3
+        env:
+          # Forward ref info for tag/version checks
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          DEBFULLNAME: ${{ github.actor }}
+          DEBEMAIL: ${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com
+        with:
+          arch: aarch64
+          distro: debian:bookworm
+          githubToken: ${{ github.token }}
+          install: |
+            apt-get update
+            apt-get install -y --no-install-recommends \
+              build-essential debhelper devscripts dh-virtualenv \
+              python3 python3-venv python3-pip python3-all git pkg-config
+            pip3 install -U setuptools-scm
+          run: |
+            set -euo pipefail
+
+            PY_VERSION="$(python3 scripts/version.py)"
+            echo "PY_VERSION=${PY_VERSION}"
+
+            # If building from tag vX.Y.Z, enforce match:
+            if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+              TAG_VERSION="${GITHUB_REF_NAME#v}"
+              [[ "${TAG_VERSION}" == "${PY_VERSION}" ]] || { echo "::error::tag ${TAG_VERSION} != ${PY_VERSION}"; exit 1; }
+            fi
+
+            # Map PEP 440 → Debian: ".devN" → "~devN"
+            DEB_VERSION="$(echo "${PY_VERSION}" | sed -E 's/\.dev/~dev/g')-1"
+            echo "DEB_VERSION=${DEB_VERSION}"
+
+            # Ensure debian/changelog exists and is set to DEB_VERSION
+            if [[ -f debian/changelog ]]; then
+              CUR="$(dpkg-parsechangelog -S Version || true)"
+              if [[ "${CUR}" != "${DEB_VERSION}" ]]; then
+                dch --newversion "${DEB_VERSION}" --distribution bookworm \
+                    "CI: version from git tags (${PY_VERSION})."
+              fi
+            else
+              dch --create --package skybox-display --newversion "${DEB_VERSION}" \
+                  --distribution bookworm "Initial CI changelog (${PY_VERSION})."
+            fi
+
+            echo "[build] dpkg-buildpackage (unsigned, binary)"
+            export PIP_DISABLE_PIP_VERSION_CHECK=1
+            export PIP_PREFER_BINARY=1
+            export PIP_NO_CACHE_DIR=1
+            dpkg-buildpackage -us -uc -b
+
+            echo "[artifacts] Collect to dist/"
+            mkdir -p dist
+            mv ../*.deb dist/
+            shopt -s nullglob
+            mv ../*.changes ../*.build ../*.buildinfo ../*.dsc ../*.tar.* dist/ || true
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: skybox-display-arm64
+          path: dist/*
+
+      - name: Release (on tags)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
