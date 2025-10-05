@@ -56,7 +56,7 @@ class UI:
     def set_page(self, direction: int) -> None:
         """Set the active page."""
         self.config["active_page"] = (self.config["active_page"] + direction) % len(self.pages)
-        LOGGER.info(f"Switched to page {self.active_page.name}")
+        LOGGER.debug(f"Switched to page {self.active_page.name}")
 
     def on_ok(self) -> None:
         self.active_page.on_ok()

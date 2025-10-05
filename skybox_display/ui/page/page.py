@@ -18,6 +18,7 @@ class Page:
         self.y = ui.content_y
         self.width = ui.content_width
         self.height = ui.content_height
+        self.line_height = 20
 
     def render(self, draw: "ImageDraw", stats: dict[str, Any]) -> None:
         pass

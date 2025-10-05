@@ -31,7 +31,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
     # Radar view settings
     "radar_max_range_km": 400,
-    "radar_center_dot_size": 3,
 
     # UI
     "theme": "Vaporwave",

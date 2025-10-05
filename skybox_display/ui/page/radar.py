@@ -36,12 +36,12 @@ class RadarPage(page.Page):
 
         # Crosshair rotated by heading
         # East-West axis line
-        ex, ey = mu.pt_for_brg(cx, cy, radius, (90.0 - heading_rot) % 360.0)
-        wx, wy = mu.pt_for_brg(cx, cy, radius, (270.0 - heading_rot) % 360.0)
+        ex, ey = math_utils.pt_for_brg(cx, cy, radius, (90.0 - heading_rot) % 360.0)
+        wx, wy = math_utils.pt_for_brg(cx, cy, radius, (270.0 - heading_rot) % 360.0)
         draw.line((wx, wy, ex, ey), fill=self.ui.theme.neutral)
         # North-South axis line
-        nx, ny = mu.pt_for_brg(cx, cy, radius, (0.0 - heading_rot) % 360.0)
-        sx, sy = mu.pt_for_brg(cx, cy, radius, (180.0 - heading_rot) % 360.0)
+        nx, ny = math_utils.pt_for_brg(cx, cy, radius, (0.0 - heading_rot) % 360.0)
+        sx, sy = math_utils.pt_for_brg(cx, cy, radius, (180.0 - heading_rot) % 360.0)
         draw.line((sx, sy, nx, ny), fill=self.ui.theme.neutral)
 
         # ring step (~≤5 rings)
@@ -57,9 +57,9 @@ class RadarPage(page.Page):
             # Label: place along rotated E/W axes
             label = str(int(r_km))
             if i % 2:  # east side
-                tx, ty = mu.pt_for_brg(cx, cy, r_px + 2, (90.0 - heading_rot) % 360.0)
+                tx, ty = math_utils.pt_for_brg(cx, cy, r_px + 2, (90.0 - heading_rot) % 360.0)
             else:      # west side
-                tx, ty = mu.pt_for_brg(cx, cy, r_px + 2, (270.0 - heading_rot) % 360.0)
+                tx, ty = math_utils.pt_for_brg(cx, cy, r_px + 2, (270.0 - heading_rot) % 360.0)
             labels.append(((tx, ty), label, "mm"))
 
         # draw later to avoid overlap
@@ -69,7 +69,7 @@ class RadarPage(page.Page):
         # N/E/S/W rotated
         # for brg, lbl in ((0.0, "N"), (90.0, "E"), (180.0, "S"), (270.0, "W")):
         for brg, lbl in ((0.0, "N"), (180.0, "S")):
-            tx, ty = mu.pt_for_brg(cx, cy, radius, (brg - heading_rot) % 360.0)
+            tx, ty = math_utils.pt_for_brg(cx, cy, radius, (brg - heading_rot) % 360.0)
             draw.text((tx, ty), lbl, font=font.SMALL, fill=self.ui.theme.accent, anchor="mm")
 
     def render(self, draw: "ImageDraw", stats: dict[str, Any]) -> None:
@@ -119,7 +119,7 @@ class RadarPage(page.Page):
                   font=font.DEFAULT, fill=self.ui.theme.secondary, anchor="lb")
 
         # Ownship
-        rdot = self.ui.config["radar_center_dot_size"]
+        rdot = 3  # Radar center dot size
         draw.ellipse((cx - rdot, cy - rdot, cx + rdot, cy + rdot), fill=self.ui.theme.accent)
 
         # Aircraft drawing with label overlap avoidance

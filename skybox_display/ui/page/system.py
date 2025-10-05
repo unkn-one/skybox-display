@@ -21,7 +21,6 @@ class SystemPage(page.Page):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.line_height = 20
         self.buttons: tuple[dict[str, Any], ...] = (
             {"icon": "\ue5cd", "command": ("systemctl", "stop", f"{APP_NAME}.service")},
             {"icon": "\ue8ac", "command": ("systemctl", "poweroff")},
@@ -47,10 +46,10 @@ class SystemPage(page.Page):
 
         # Current values
         data = (
-            ("CPU:", f"{cpu_vals[-1] or 0:.0f}%" if cpu_vals else "N/A"),
-            ("MEM:", f"{mem_vals[-1] or 0:.0f}%" if mem_vals else "N/A"),
-            ("TEMP:", f"{temp_vals[-1] or 0:.1f}°C" if temp_vals else "N/A"),
-            ("NET:", ip),
+            ("CPU", f"{cpu_vals[-1] or 0:.0f}%" if cpu_vals else "N/A"),
+            ("MEM", f"{mem_vals[-1] or 0:.0f}%" if mem_vals else "N/A"),
+            ("TEMP", f"{temp_vals[-1] or 0:.1f}°C" if temp_vals else "N/A"),
+            ("NET", ip),
         )
         for i, (key, value) in enumerate(data):
             cur_y = self.y + self.line_height * i

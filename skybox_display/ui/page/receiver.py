@@ -16,10 +16,6 @@ class ReceiverPage(page.Page):
     icon = "\ue8bf"
     accent = "receiver_page"
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.line_height = 20
-
     def render(self, draw: "ImageDraw", stats: dict[str, Any]) -> None:
         stats_data = stats.get("stats", {})
 

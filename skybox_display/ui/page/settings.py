@@ -27,7 +27,6 @@ class SettingsPage(page.Page):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.line_height = 20
         self.settings_mode: SettingsMode = SettingsMode.OFF
         self.settings_index: int = 0
         self.pending: Optional[int] = None  # index into current item's values while editing
