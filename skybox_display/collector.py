@@ -103,7 +103,7 @@ class DataCollector(concurrency.Threaded):
 
         # Sleep until the earliest next due, bounded for responsiveness
         sleep_for = max(0.01, min(0.25, next_due - time.monotonic()))
-        self._stop.wait(sleep_for)
+        self._stop_ev.wait(sleep_for)
 
     def _run_task(self, name: str, fn: Callable[[], None], error_target: str | None) -> None:
         """Run a polling task with unified error handling and status marking."""

@@ -1,11 +1,17 @@
+import logging
+import subprocess
 import typing
 from typing import Any
 
+from skybox_display import APP_NAME
 from skybox_display.ui import font, utils
 from skybox_display.ui.page import page
 
 if typing.TYPE_CHECKING:
     from PIL.ImageDraw import ImageDraw
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class SystemPage(page.Page):
@@ -16,6 +22,12 @@ class SystemPage(page.Page):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.line_height = 20
+        self.buttons: tuple[dict[str, Any], ...] = (
+            {"icon": "\ue5cd", "command": ("systemctl", "stop", f"{APP_NAME}.service")},
+            {"icon": "\ue8ac", "command": ("systemctl", "poweroff")},
+            {"icon": "\uf053", "command": ("systemctl", "reboot")},
+        )
+        self.selected_button: int | None = None
 
     def render(self, draw: "ImageDraw", stats: dict[str, Any]) -> None:
         """Render the system information page.
@@ -59,3 +71,46 @@ class SystemPage(page.Page):
         if temp_vals and len(temp_vals) > 1:
             utils.draw_mini_graph(draw, graph_x, self.y + 40, graph_width, graph_height,
                                   temp_vals, self.ui.theme.accent, self.ui.theme.neutral, 20, 80)
+        button_y = self.y + self.height - 24
+        button_spacing = 60
+        total_span = button_spacing * (len(self.buttons) - 1) if len(self.buttons) > 1 else 0
+        start_x = self.x + self.width / 2 - total_span / 2
+        for idx, button in enumerate(self.buttons):
+            icon_color = self.ui.theme.accent if self.selected_button == idx else self.ui.theme.secondary
+            draw.text((start_x + idx * button_spacing, button_y), button["icon"], font=font.ICON, fill=icon_color, anchor="mm")
+
+    def _activate_button(self, index: int) -> None:
+        command = self.buttons[index]["command"]
+        try:
+            subprocess.Popen(command)
+        except Exception as e:
+            LOGGER.error("Failed to execute %s: %s", command, e)
+
+    def on_ok(self) -> bool:
+        if self.buttons:
+            if self.selected_button is None:
+                self.selected_button = 0
+            else:
+                self._activate_button(self.selected_button)
+                self.selected_button = None
+            return True
+        return False
+
+    def on_cancel(self) -> bool:
+        if self.selected_button is None:
+            return False
+        self.selected_button = None
+        return True
+
+    def on_next(self) -> bool:
+        if self.buttons and self.selected_button is not None:
+            self.selected_button = (self.selected_button + 1) % len(self.buttons)
+            return True
+        return False
+
+
+    def on_prev(self) -> bool:
+        if self.buttons and self.selected_button is not None:
+            self.selected_button = (self.selected_button - 1) % len(self.buttons)
+            return True
+        return False

@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+import threading
 import time
 
 import evdev
@@ -14,13 +15,13 @@ class App:
 
     def __init__(self):
         """Initialize the application."""
+        self._stop = threading.Event()
         self.config = config.load_config()
         ui.load_themes()
         self.ui = ui.UI(self, self.config)
         self.collector = collector.DataCollector(self.config)
         self.display = display.Display(self.config)
         self.keyboard = keyboard.KeyboardInput()
-        self.running = False
 
     def connect_keyboard(self):
         """Connect keyboard callbacks."""
@@ -43,9 +44,8 @@ class App:
         self.keyboard.start()
 
         self.display.switch_to_target()
-        self.running = True
         try:
-            while self.running:
+            while not self._stop.is_set():
                 loop_start = time.monotonic()
                 if self.display.is_active():
                     stats = self.collector.snapshot()
@@ -67,7 +67,7 @@ class App:
     def cleanup(self) -> None:
         """Clean up resources before exit."""
         LOGGER.info("Cleaning up")
-        self.running = False
+        self._stop.set()
         try:
             config.save_config(self.config)
         except Exception as e:

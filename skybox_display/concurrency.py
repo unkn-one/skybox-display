@@ -9,7 +9,7 @@ class Threaded(threading.Thread):
 
     def __init__(self):
         super().__init__(name=self.__class__.__name__, daemon=True)
-        self._stop = threading.Event()
+        self._stop_ev = threading.Event()
 
     def stop(self, join_timeout: float | None = None) -> None:
         """Signal the thread to stop and optionally join.
@@ -18,7 +18,8 @@ class Threaded(threading.Thread):
             join_timeout: If provided, block up to this many seconds
                           for the thread to finish. If None, do not join.
         """
-        self._stop.set()
+        LOGGER.debug(f"Stopping {self.name} thread")
+        self._stop_ev.set()
         # Avoid deadlock if called from within the same thread
         if join_timeout is not None and threading.current_thread() is not self:
             if self.is_alive():
@@ -30,7 +31,7 @@ class Threaded(threading.Thread):
     def run(self) -> None:
         LOGGER.debug(f"Starting {self.name} thread")
         try:
-            while not self._stop.is_set():
+            while not self._stop_ev.is_set():
                 self._execute()
         finally:
             self._clean()
