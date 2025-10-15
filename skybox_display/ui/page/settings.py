@@ -1,20 +1,28 @@
 import typing
-from collections import namedtuple
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Optional
-from enum import Enum
+from enum import StrEnum
 
 from skybox_display.ui import font, theme
-from skybox_display import config
+from skybox_display import config, math_utils
 from skybox_display.ui.page import page
 from skybox_display.ui.page.receiver import LOGGER
 
 if typing.TYPE_CHECKING:
     from PIL.ImageDraw import ImageDraw
 
-SettingItem = namedtuple("SettingItem", ("label", "key", "values", "on_set"))
+
+@dataclass(slots=True)
+class SettingItem:
+    label: str
+    key: str
+    values: list
+    fmt: str | Callable[[Any], str] | None = None
+    on_set: Callable[[], None] | None = None
 
 
-class SettingsMode(str, Enum):
+class SettingsMode(StrEnum):
     OFF = "off"
     SELECT = "select"
     EDIT = "edit"
@@ -31,18 +39,21 @@ class SettingsPage(page.Page):
         self.settings_index: int = 0
         self.pending: Optional[int] = None  # index into current item's values while editing
         self.items = (
-            SettingItem("Aircraft Sort", "aircraft_sort", ["none", "distance", "signal", "altitude", "speed"], None),
-            SettingItem("UI Theme", "theme", theme.get_theme_names(), self.on_set_theme),
-            SettingItem("Units", "units", ["metric", "imperial"], None),
-            SettingItem("IMU", "imu_model", [None, "LSM9DS1"], None),
+            SettingItem("Aircraft Sort", "aircraft_sort", ["none", "distance", "signal", "altitude", "speed"]),
+            SettingItem("Radar Scale", "radar_scale", list(str(m) for m in math_utils.ScaleMode)),
+            SettingItem("Radar Auto Range", "radar_auto_range", [True, False]),
+            SettingItem("Radar Max Range", "radar_max_range_km", list(range(25, 501, 25)), "{} km"),
+            SettingItem("UI Theme", "theme", theme.get_theme_names(), on_set=self.on_set_theme),
+            SettingItem("Units", "units", ["metric", "imperial"]),
+            SettingItem("IMU", "imu_model", [None, "LSM9DS1"]),
         )
 
     def render(self, draw: "ImageDraw", stats: dict[str, Any]) -> None:
         """Render the Settings page with selection/edit flow."""
-        val_x = self.x + self.width/2
+        val_x = self.x + self.width/2 + 10
         for i, item in enumerate(self.items):
             cy = self.y + i * self.line_height
-            label = item.label + ":"
+            label = item.label
             # Determine current index for display
             if self.settings_mode is SettingsMode.EDIT and i == self.settings_index and self.pending is not None:
                 idx = self.pending
@@ -52,8 +63,17 @@ class SettingsPage(page.Page):
                 except ValueError:
                     idx = 0
             value = item.values[idx]
-            if isinstance(value, str):
-                value = value.title()
+
+            if isinstance(item.fmt, str):
+                display_value = item.fmt.format(value)
+            elif callable(item.fmt):
+                display_value = item.fmt(value)
+            elif isinstance(value, str):
+                display_value = value.title()
+            elif isinstance(value, bool):
+                display_value = "On" if value else "Off"
+            else:
+                display_value = str(value)
 
             label_color = self.ui.theme.fg
             value_color = self.ui.theme.secondary
@@ -63,7 +83,7 @@ class SettingsPage(page.Page):
                 value_color = self.accent_color
 
             draw.text((self.x, cy), label, font=font.DEFAULT, fill=label_color)
-            draw.text((val_x, cy), str(value), font=font.DEFAULT, fill=value_color)
+            draw.text((val_x, cy), str(display_value), font=font.DEFAULT, fill=value_color)
 
         hint = "OK: Select/Edit/Confirm  Back: Exit"
         draw.text((self.x, self.y + self.height - 2), hint, font=font.SMALL, fill=self.ui.theme.neutral, anchor="lb")

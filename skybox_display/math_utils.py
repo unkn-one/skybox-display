@@ -1,4 +1,5 @@
 import math
+from enum import StrEnum, auto
 
 
 def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -55,14 +56,21 @@ def bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
     return bearing
 
-def range_scale(d: float, dmax: float, scale_mode: str) -> float:
+
+class ScaleMode(StrEnum):
+    LINEAR = auto()
+    LOG5 = auto()
+    LOG10 = auto()
+
+
+def range_scale(d: float, dmax: float, scale_mode: ScaleMode) -> float:
     """Convert distance using selected scale mode."""
     dmax = max(dmax, 1e-3)
     ratio = min(max(d / dmax, 0.0), 1.0)
 
-    if scale_mode == "log5":
+    if scale_mode == ScaleMode.LOG5:
         f = math.log(1.0 + 4.0 * ratio, 5.0)
-    elif scale_mode == "log10":
+    elif scale_mode == ScaleMode.LOG10:
         f = math.log(1.0 + 9.0 * ratio, 10.0)
     else:  # linear
         f = ratio

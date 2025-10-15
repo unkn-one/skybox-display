@@ -18,7 +18,6 @@ class RadarPage(page.Page):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._ring_candidates = [1, 2, 5, 10, 20, 25, 50, 100, 200, 300, 400, 500]
-        self._scales = ["linear", "log5", "log10"]
         self._radio_lat = self.ui.config["radio_lat"]
         self._radio_lon = self.ui.config["radio_lon"]
 
@@ -28,7 +27,7 @@ class RadarPage(page.Page):
         return max(25.0, min(max_dist, math.ceil(dist / 25.0) * 25.0))
 
     def _draw_radar_grid(self, draw: "ImageDraw", cx: int, cy: int,
-                         radius: int, dmax_km: float, scale_mode: str,
+                         radius: int, dmax_km: float, scale_mode: math_utils.ScaleMode,
                          heading_rot: float) -> None:
         """Crosshair, rings, labels, and N/E/S/W rotated by device heading."""
 
@@ -44,7 +43,7 @@ class RadarPage(page.Page):
         sx, sy = math_utils.pt_for_brg(cx, cy, radius, (180.0 - heading_rot) % 360.0)
         draw.line((sx, sy, nx, ny), fill=self.ui.theme.neutral)
 
-        # ring step (~≤5 rings)
+        # Ring step (~≤5 rings)
         step = next((s for s in self._ring_candidates if (dmax_km // s) <= 5), self._ring_candidates[-1])
         n = int(dmax_km // step)
 
@@ -62,7 +61,7 @@ class RadarPage(page.Page):
                 tx, ty = math_utils.pt_for_brg(cx, cy, r_px + 2, (270.0 - heading_rot) % 360.0)
             labels.append(((tx, ty), label, "mm"))
 
-        # draw later to avoid overlap
+        # Draw later to avoid overlap
         for pos, label, anchor in labels:
             draw.text(pos, label, font=font.SMALL, fill=self.ui.theme.secondary, anchor=anchor)
 
@@ -72,9 +71,19 @@ class RadarPage(page.Page):
             tx, ty = math_utils.pt_for_brg(cx, cy, radius, (brg - heading_rot) % 360.0)
             draw.text((tx, ty), lbl, font=font.SMALL, fill=self.ui.theme.accent, anchor="mm")
 
+        # Range and scale
+        draw.text((self.x, self.y), "Range", font=font.DEFAULT,
+                  fill=self.ui.theme.secondary, anchor="la")
+        draw.text((self.x, self.y + self.line_height), f"{int(dmax_km)} km", font=font.DEFAULT,
+                  fill=self.ui.theme.secondary, anchor="la")
+        draw.text((self.x, self.y + self.height - self.line_height), "Scale",
+                  font=font.DEFAULT, fill=self.ui.theme.secondary, anchor="ld")
+        draw.text((self.x, self.y + self.height), f"{scale_mode.title()}",
+                  font=font.DEFAULT, fill=self.ui.theme.secondary, anchor="ld")
+
     def render(self, draw: "ImageDraw", stats: dict[str, Any]) -> None:
         # Refresh scale from config in case it was changed via Settings
-        scale_mode = self.ui.config["radar_scale"]
+        scale_mode = math_utils.ScaleMode(self.ui.config["radar_scale"])
         pad = 4
         cx = self.x + self.width // 2
         cy = self.y + self.height // 2
@@ -103,20 +112,20 @@ class RadarPage(page.Page):
             points.append((d, brg, hdg, label))
             dmax = max(dmax, d)
 
-        # Quantised span: farthest * 1.1 -> round up to 25 km steps (min 25, capped)
-        dspan_raw = max(dmax * 1.1, 10.0)
-        dspan = math_utils.quantise_range(dspan_raw, self.ui.config["radar_max_range_km"], 25.0)
+        max_range_km = float(self.ui.config["radar_max_range_km"])
+        auto_range = bool(self.ui.config.get("radar_auto_range", True))
+
+        if auto_range:
+            # Quantised span: farthest * 1.1 -> round up to 25 km steps (min 25, capped)
+            dspan_raw = max(dmax * 1.1, 10.0)
+            dspan = math_utils.quantise_range(dspan_raw, max_range_km, 25.0)
+        else:
+            dspan = max(25.0, max_range_km)
 
         # Cached grid; include heading (rounded) so we redraw only when orientation changes
         with self.ui.cache.draw(draw, (id(self), int(dspan), scale_mode, int(heading_rot))) as layer_draw:
             if layer_draw:
                 self._draw_radar_grid(layer_draw, cx, cy, radius, dspan, scale_mode, heading_rot)
-
-        # Range and scale
-        draw.text((self.x, self.y), f"RNG: {int(dspan)}km", font=font.DEFAULT,
-                  fill=self.ui.theme.secondary, anchor="la")
-        draw.text((self.x, self.y + self.height), f"SCL: {scale_mode.upper()}",
-                  font=font.DEFAULT, fill=self.ui.theme.secondary, anchor="lb")
 
         # Ownship
         rdot = 3  # Radar center dot size
@@ -168,6 +177,7 @@ class RadarPage(page.Page):
 
     def on_cancel(self) -> bool:
         scale_mode = self.ui.config["radar_scale"]
-        current_idx = self._scales.index(scale_mode)
-        self.ui.config["radar_scale"] = self._scales[(current_idx + 1) % len(self._scales)]
+        scales = tuple(math_utils.ScaleMode)
+        current_idx = scales.index(scale_mode)
+        self.ui.config["radar_scale"] = str(scales[(current_idx + 1) % len(scales)])
         return True

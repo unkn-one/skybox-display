@@ -31,6 +31,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
     # Radar view settings
     "radar_max_range_km": 400,
+    "radar_auto_range": True,
 
     # UI
     "theme": "Vaporwave",
@@ -120,3 +121,4 @@ def load_config(env_prefix: str = "SD") -> dict[str, Any]:
 
     _apply_env_overrides(cfg, DEFAULT_CONFIG, env_prefix)
     return cfg
+
