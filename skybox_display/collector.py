@@ -131,7 +131,7 @@ class DataCollector(concurrency.Threaded):
 
     def update_imu(self) -> dict[str, Any]:
         """Update IMU heading if device is available."""
-        return {"heading": self._imu_dev.read_heading()}
+        return {"heading": int(self._imu_dev.read_heading() / 2) * 2}
 
     def update_receiver(self) -> None:
         """Update dump1090 receiver info."""

@@ -38,11 +38,13 @@ class SystemPage(page.Page):
             width, height: Content area dimensions
         """
         system_data = data.get("system", {})
+        imu_data = data.get("imu", {})
 
         cpu_vals = system_data.get("cpu")
         mem_vals = system_data.get("mem")
         temp_vals = system_data.get("temp")
         ip = system_data.get("ip", "N/A")
+        heading = imu_data.get("heading", "N/A")
 
         # Current values
         data = (
@@ -50,6 +52,7 @@ class SystemPage(page.Page):
             ("MEM", f"{mem_vals[-1] or 0:.0f}%" if mem_vals else "N/A"),
             ("TEMP", f"{temp_vals[-1] or 0:.1f}°C" if temp_vals else "N/A"),
             ("NET", ip),
+            ("HEAD", f"{heading}°"),
         )
         for i, (key, value) in enumerate(data):
             cur_y = self.y + self.line_height * i
