@@ -99,10 +99,18 @@ class SystemPage(page.Page):
         return False
 
     def on_cancel(self) -> bool:
-        if self.selected_button is None:
+        if self.selected_button is not None:
+            self.selected_button = None
+            return True
+        try:
+            if self.ui.app.collector.start_imu_calibration():
+                LOGGER.info("IMU calibration started")
+            else:
+                LOGGER.warning("IMU calibration unavailable or already running")
+            return True
+        except Exception as exc:
+            LOGGER.error("IMU calibration request failed: %s", exc)
             return False
-        self.selected_button = None
-        return True
 
     def on_next(self) -> bool:
         if self.buttons and self.selected_button is not None:

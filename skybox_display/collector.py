@@ -93,7 +93,8 @@ class DataCollector(concurrency.Threaded):
         """Clean up resources."""
         try:
             self._session.close()
-            self._imu_dev.close()
+            if hasattr(self._imu_dev, "close"):
+                self._imu_dev.close()
         except Exception as e:
             LOGGER.exception(e)
 
@@ -131,7 +132,12 @@ class DataCollector(concurrency.Threaded):
 
     def update_imu(self) -> dict[str, Any]:
         """Update IMU heading if device is available."""
-        return {"heading": int(self._imu_dev.read_heading() / 2) * 2}
+        heading = self._imu_dev.read_heading()
+        if heading is None:
+            return {}
+        # Quantize to reduce UI jitter
+        quantized = round(heading / 2) * 2
+        return {"heading": quantized % 360}
 
     def update_receiver(self) -> None:
         """Update dump1090 receiver info."""
@@ -211,3 +217,7 @@ class DataCollector(concurrency.Threaded):
         """Get a thread-safe snapshot of all collected data."""
         with self._lock:
             return {name: task.result for name, task in self._tasks.items() if task.result is not None}
+
+    def start_imu_calibration(self) -> bool:
+        """Request IMU orientation calibration."""
+        return self._imu_dev.start_calibration()

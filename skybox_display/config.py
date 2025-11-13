@@ -46,8 +46,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "imu_bus": 1,
     "imu_mag_addr": 0x1E,
     "imu_ag_addr": 0x6B,
-    "imu_declination_deg": 0.0,
-    "imu_heading_offset": 0.0,
+    "imu_declination_deg": 0.0,  # Magnetic declination to convert magnetic heading -> true north
+    "imu_heading_offset": 0.0,   # Extra manual trim applied after calibration
+    "imu_rotation": [
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ],
 }
 
 
@@ -121,4 +126,3 @@ def load_config(env_prefix: str = "SD") -> dict[str, Any]:
 
     _apply_env_overrides(cfg, DEFAULT_CONFIG, env_prefix)
     return cfg
-

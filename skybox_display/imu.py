@@ -1,67 +1,152 @@
 import logging
 import math
+import struct
+import threading
+import time
+from typing import Any, Sequence
 
+import numpy as np
 from smbus2 import SMBus
+
+from skybox_display import config as config_mod
 
 LOGGER = logging.getLogger(__name__)
 
 
+def _normalize_matrix(matrix: Sequence[Sequence[float]] | np.ndarray | None) -> np.ndarray:
+    """Return a valid 3x3 rotation matrix, falling back to identity."""
+    if matrix is None:
+        return np.identity(3, dtype=float)
+    try:
+        arr = np.array(matrix, dtype=float)
+    except Exception as exc:  # pragma: no cover - defensive
+        LOGGER.warning("Invalid IMU rotation matrix (%s). Using identity", exc)
+        return np.identity(3, dtype=float)
+    if arr.shape != (3, 3):
+        LOGGER.warning("IMU rotation matrix must be 3x3; got %s. Using identity", arr.shape)
+        return np.identity(3, dtype=float)
+    return arr
+
+
+def _matrix_from_vectors(mag: np.ndarray, acc: np.ndarray) -> np.ndarray | None:
+    """Compute a rotation matrix that maps sensor vectors to the device frame."""
+    acc_norm = np.linalg.norm(acc)
+    if acc_norm == 0:
+        return None
+    z_axis = -acc / acc_norm  # Device +Z points away from gravity
+
+    mag_horizontal = mag - np.dot(mag, z_axis) * z_axis
+    mag_norm = np.linalg.norm(mag_horizontal)
+    if mag_norm == 0:
+        return None
+    y_axis = mag_horizontal / mag_norm  # Device +Y points toward magnetic north
+
+    x_axis = np.cross(y_axis, z_axis)
+    x_norm = np.linalg.norm(x_axis)
+    if x_norm == 0:
+        return None
+    x_axis /= x_norm
+
+    y_axis = np.cross(z_axis, x_axis)
+    y_norm = np.linalg.norm(y_axis)
+    if y_norm == 0:
+        return None
+    y_axis /= y_norm
+
+    # Stack rows so outputs correspond to (forward/north, right/east, up)
+    return np.vstack([y_axis, x_axis, z_axis])
+
+
 class IMUBase:
-    def __init__(self, bus: int):
-        self._busno = bus
-        self._bus = SMBus(bus)
+    """Common functionality for IMU devices, including calibration orchestration."""
+    SUPPORTS_CALIBRATION = False
+
+    def __init__(self, cfg: dict[str, Any]):
+        self._config = cfg
+        self._rotation = _normalize_matrix(cfg.get("imu_rotation"))
+        self._decl = float(cfg.get("imu_declination_deg", 0.0))
+        self._offset = float(cfg.get("imu_heading_offset", 0.0))
+        self._cal_thread: threading.Thread | None = None
+        self._cal_lock = threading.Lock()
 
     def read_heading(self) -> float | None:
-        return None
+        pass
 
     def close(self) -> None:
-        try:
-            self._bus.close()
-        except Exception as e:
-            LOGGER.exception(f"Unable to close I2C bus: {e}")
+        pass
 
-    def tilt_compass_heading(
+    def start_calibration(self, duration: float = 3.0, sample_delay: float = 0.05) -> bool:
+        """Kick off orientation calibration in a background thread."""
+        if not self.SUPPORTS_CALIBRATION:
+            LOGGER.warning("IMU calibration not supported for %s", self.__class__.__name__)
+            return False
+        with self._cal_lock:
+            if self._cal_thread and self._cal_thread.is_alive():
+                LOGGER.info("IMU calibration already running")
+                return False
+            self._cal_thread = threading.Thread(
+                target=self._calibration_worker,
+                args=(duration, sample_delay),
+                name=f"{self.__class__.__name__}Cal",
+                daemon=True,
+            )
+            self._cal_thread.start()
+        LOGGER.info("IMU calibration started")
+        return True
+
+    def _collect_calibration_matrix(self, duration: float, sample_delay: float) -> np.ndarray | None:
+        return None
+
+    def _calibration_worker(self, duration: float, sample_delay: float) -> None:
+        try:
+            matrix = self._collect_calibration_matrix(duration, sample_delay)
+            if matrix is None:
+                LOGGER.warning("IMU calibration failed: no data captured")
+                return
+            self._rotation = matrix
+            as_list = matrix.tolist()
+            self._config["imu_rotation"] = as_list
+            config_mod.save_config(self._config)
+            LOGGER.info("IMU calibration complete")
+        except Exception as exc:
+            LOGGER.exception("IMU calibration error: %s", exc)
+        finally:
+            with self._cal_lock:
+                self._cal_thread = None
+
+    def _apply_rotation(self, vec: np.ndarray) -> np.ndarray:
+        return self._rotation @ vec
+
+    def _tilt_compass_heading(
         self,
-        mx: float,
-        my: float,
-        mz: float,
-        ax: float,
-        ay: float,
-        az: float,
+        mag_vec: Sequence[float] | np.ndarray,
+        acc_vec: Sequence[float] | np.ndarray,
         declination_deg: float = 0.0,
         offset_deg: float = 0.0,
     ) -> float | None:
-        """Compute tilt-compensated compass heading from mag + accel.
+        """Compute tilt-compensated heading using device-frame projections."""
+        mag = np.asarray(mag_vec, dtype=float).reshape(3)
+        acc = np.asarray(acc_vec, dtype=float).reshape(3)
 
-        Bearing convention: 0 degrees points to North (up), 90 to East (right).
-
-        Args:
-            mx, my, mz: Magnetometer axes (arbitrary units)
-            ax, ay, az: Accelerometer axes (arbitrary units)
-            declination_deg: Magnetic declination correction (deg)
-            offset_deg: Additional manual heading trim (deg)
-
-        Returns:
-            Heading in degrees [0..360) or None if unavailable.
-        """
-        anorm = (ax * ax + ay * ay + az * az) ** 0.5 or 1.0
-        axn, ayn, azn = ax / anorm, ay / anorm, az / anorm
-
-        # Roll and pitch from accelerometer
-        roll = math.atan2(ayn, azn)
-        pitch = math.atan2(-axn, (ayn * ayn + azn * azn) ** 0.5)
-
-        # Tilt-compensate magnetometer
-        Xh = mx * math.cos(pitch) + mz * math.sin(pitch)
-        Yh = mx * math.sin(roll) * math.sin(pitch) + my * math.cos(roll) - mz * math.sin(roll) * math.cos(pitch)
-
-        if Xh == 0 and Yh == 0:
+        acc_norm = np.linalg.norm(acc)
+        if acc_norm == 0:
             return None
-        heading = math.degrees(math.atan2(Yh, Xh))
-        if heading < 0:
-            heading += 360.0
-        heading = (heading + declination_deg + offset_deg) % 360.0
-        return heading
+        up = -acc / acc_norm  # device +Z points away from gravity
+
+        # Remove vertical component from magnetometer
+        mag_horizontal = mag - np.dot(mag, up) * up
+        mag_norm = np.linalg.norm(mag_horizontal)
+        if mag_norm == 0:
+            return None
+        mag_horizontal /= mag_norm
+
+        forward_axis = np.array([1.0, 0.0, 0.0])
+        right_axis = np.array([0.0, 1.0, 0.0])
+
+        heading = math.degrees(
+            math.atan2(np.dot(mag_horizontal, right_axis), np.dot(mag_horizontal, forward_axis))
+        )
+        return (heading + declination_deg + offset_deg) % 360.0
 
 
 class LSM9DS1(IMUBase):
@@ -77,27 +162,35 @@ class LSM9DS1(IMUBase):
     CTRL_REG6_XL = 0x20  # Accel ODR and scale
     OUT_X_L_XL = 0x28
 
-    def __init__(self, bus: int, mag_addr: int, ag_addr: int,
-                 declination_deg: float = 0.0, heading_offset_deg: float = 0.0):
-        super().__init__(bus)
-        self._mag_addr = mag_addr
-        self._ag_addr = ag_addr
-        self._decl = declination_deg
-        self._off = heading_offset_deg
+    SUPPORTS_CALIBRATION = True
+
+    def __init__(self, cfg: dict[str, Any]):
+        super().__init__(cfg)
+        bus = cfg.get("imu_bus")
+        self._bus = SMBus(bus) if bus is not None else None
+        self._mag_addr = int(cfg.get("imu_mag_addr", 0x1E))
+        self._ag_addr = int(cfg.get("imu_ag_addr", 0x6B))
         self._init_mag()
         self._init_ag()
+
+    def close(self) -> None:
+        if self._bus is None:
+            return
+        try:
+            self._bus.close()
+        except Exception as exc:
+            LOGGER.exception("Unable to close I2C bus: %s", exc)
 
     def _write_mag(self, reg: int, val: int) -> None:
         self._bus.write_byte_data(self._mag_addr, reg, val & 0xFF)
 
-    def _read_mag_block(self, reg: int, length: int) -> bytes:
-        # Auto-increment on multi-byte reads by setting MSB of subaddress
+    def _read_mag_block(self, reg: int, length: int) -> list[int]:
         return self._bus.read_i2c_block_data(self._mag_addr, reg | 0x80, length)
 
     def _write_ag(self, reg: int, val: int) -> None:
         self._bus.write_byte_data(self._ag_addr, reg, val & 0xFF)
 
-    def _read_ag_block(self, reg: int, length: int) -> bytes:
+    def _read_ag_block(self, reg: int, length: int) -> list[int]:
         return self._bus.read_i2c_block_data(self._ag_addr, reg | 0x80, length)
 
     def _init_mag(self) -> None:
@@ -111,65 +204,67 @@ class LSM9DS1(IMUBase):
             self._write_mag(self.CTRL_REG3_M, 0x00)
             # CTRL_REG4_M: OMZ=11 (UHP)
             self._write_mag(self.CTRL_REG4_M, 0x0C)
-        except Exception:
-            # If init fails, we'll still try to read; device may already be configured.
-            pass
+        except Exception as exc:
+            LOGGER.exception("Error while initializing magnetometer: %s", exc)
 
     def _init_ag(self) -> None:
         # Accelerometer: +/- 2g, ODR ~ 10Hz (sufficient for heading smoothing)
         try:
             # CTRL_REG6_XL: ODR_XL = 0101 (~ 10 Hz), FS = 00 (+/-2g), BW = 00
             self._write_ag(self.CTRL_REG6_XL, 0x50)
-        except Exception:
-            pass
+        except Exception as exc:
+            LOGGER.exception("Error while initializing accelerometer: %s", exc)
 
-    @staticmethod
-    def _twos_compl(val_l: int, val_h: int) -> int:
-        v = (val_h << 8) | val_l
-        if v & 0x8000:
-            v -= 0x10000
-        return v
+    def _read_raw_vectors(self) -> tuple[np.ndarray, np.ndarray]:
+        m = bytes(self._read_mag_block(self.OUT_X_L_M, 6))
+        mag = np.array(struct.unpack("<hhh", m), dtype=float)
+
+        a = bytes(self._read_ag_block(self.OUT_X_L_XL, 6))
+        acc = np.array(struct.unpack("<hhh", a), dtype=float)
+        return mag, acc
 
     def read_heading(self) -> float | None:
-        """Tilt-compensated compass heading in degrees [0..360)."""
         try:
-            # Read raw magnetometer
-            m = self._read_mag_block(self.OUT_X_L_M, 6)
-            mx = self._twos_compl(m[0], m[1])
-            my = self._twos_compl(m[2], m[3])
-            mz = self._twos_compl(m[4], m[5])
-
-            # Read raw accelerometer
-            a = self._read_ag_block(self.OUT_X_L_XL, 6)
-            ax = self._twos_compl(a[0], a[1])
-            ay = self._twos_compl(a[2], a[3])
-            az = self._twos_compl(a[4], a[5])
-
-            return self.tilt_compass_heading(mx, my, mz, ax, ay, az, self._decl, self._off)
-        except Exception:
+            mag_raw, acc_raw = self._read_raw_vectors()
+            mag = self._apply_rotation(mag_raw)
+            acc = self._apply_rotation(acc_raw)
+            return self._tilt_compass_heading(mag, acc, self._decl, self._offset)
+        except Exception as exc:
+            LOGGER.exception("IMU heading read failed: %s", exc)
             return None
+
+    def _collect_calibration_matrix(self, duration: float, sample_delay: float) -> np.ndarray | None:
+        end_time = time.monotonic() + duration
+        mag_samples: list[np.ndarray] = []
+        acc_samples: list[np.ndarray] = []
+
+        while time.monotonic() < end_time:
+            try:
+                mag, acc = self._read_raw_vectors()
+                mag_samples.append(mag)
+                acc_samples.append(acc)
+            except Exception as exc:
+                LOGGER.debug("IMU sample failed during calibration: %s", exc)
+            time.sleep(sample_delay)
+
+        if not mag_samples or not acc_samples:
+            return None
+
+        mag_avg = np.mean(mag_samples, axis=0)
+        acc_avg = np.mean(acc_samples, axis=0)
+        return _matrix_from_vectors(mag_avg, acc_avg)
 
 
 class DummyIMU(IMUBase):
-    def __init__(self):
-        pass
-
-    def close(self) -> None:
-        pass
+    pass
 
 
-def load(config: dict) -> IMUBase:
-    model = config.get("imu_model")
-    LOGGER.info(f"Initializing IMU: {model}")
+def load(cfg: dict[str, Any]) -> IMUBase:
+    model = cfg.get("imu_model")
+    LOGGER.info("Initializing IMU: %s", model)
     if model == "LSM9DS1":
         try:
-            return LSM9DS1(
-                bus=int(config.get("imu_bus", 1)),
-                mag_addr=int(config.get("imu_mag_addr", 0x1E)),
-                ag_addr=int(config.get("imu_ag_addr", 0x6B)),
-                declination_deg=float(config.get("imu_declination_deg", 0.0)),
-                heading_offset_deg=float(config.get("imu_heading_offset", 0.0)),
-            )
-        except Exception as e:
-            LOGGER.exception(f"Unable to initialize IMU({model}): {e}")
-    return DummyIMU()
+            return LSM9DS1(cfg)
+        except Exception as exc:
+            LOGGER.exception("Unable to initialize IMU(%s): %s", model, exc)
+    return DummyIMU(cfg)
