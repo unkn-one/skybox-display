@@ -23,6 +23,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "aircraft_poll_interval": 0.5,
     "status_poll_interval": 1.0,
     "system_poll_interval": 5.0,
+    "imu_poll_interval": 0.5,
     "system_samples": 20,
 
     # Radio position (configure these for your location)
@@ -41,13 +42,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "active_page": 0,
 
     # IMU (compass)
-    "imu_model": "LSM9DS1",
+    "imu_model": None,
     "imu_bus": 1,
     "imu_mag_addr": 0x1E,
     "imu_ag_addr": 0x6B,
     "imu_declination_deg": 0.0,
     "imu_heading_offset": 0.0,
-    "imu_poll_interval": 0.5,
 }
 
 

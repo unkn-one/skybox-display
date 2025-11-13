@@ -62,12 +62,11 @@ class AircraftPage(page.Page):
         except (TypeError, ValueError):
             return float('inf')
 
-    def render(self, draw: "ImageDraw", stats: dict[str, Any]) -> None:
-        aircraft_data = stats.get("aircraft", {})
-        aircraft_list = aircraft_data.get("aircraft", [])
-        imu_data = stats.get("imu", {})
+    def render(self, draw: "ImageDraw", data: dict[str, Any]) -> None:
+        aircraft_list = data.get("aircraft", [])
+        imu_data = data.get("imu", {})
         imu_heading = imu_data.get("heading")
-        heading_rot = float(imu_heading) % 360.0 if isinstance(imu_heading, (int, float)) else 0.0
+        heading_rot = imu_heading if isinstance(imu_heading, (int, float)) else 0.0
 
         # Handle empty list
         if not aircraft_list:

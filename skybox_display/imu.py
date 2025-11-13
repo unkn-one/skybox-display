@@ -1,8 +1,3 @@
-"""IMU support (LSM9DS1 over I2C) with a simple compass heading API.
-
-This module is optional. If smbus2 is unavailable or hardware is missing,
-it gracefully degrades to a dummy IMU that returns None.
-"""
 import logging
 import math
 
@@ -12,11 +7,18 @@ LOGGER = logging.getLogger(__name__)
 
 
 class IMUBase:
+    def __init__(self, bus: int):
+        self._busno = bus
+        self._bus = SMBus(bus)
+
     def read_heading(self) -> float | None:
         return None
 
     def close(self) -> None:
-        pass
+        try:
+            self._bus.close()
+        except Exception as e:
+            LOGGER.exception(f"Unable to close I2C bus: {e}")
 
     def tilt_compass_heading(
         self,
@@ -42,27 +44,24 @@ class IMUBase:
         Returns:
             Heading in degrees [0..360) or None if unavailable.
         """
-        try:
-            anorm = (ax * ax + ay * ay + az * az) ** 0.5 or 1.0
-            axn, ayn, azn = ax / anorm, ay / anorm, az / anorm
+        anorm = (ax * ax + ay * ay + az * az) ** 0.5 or 1.0
+        axn, ayn, azn = ax / anorm, ay / anorm, az / anorm
 
-            # Roll and pitch from accelerometer
-            roll = math.atan2(ayn, azn)
-            pitch = math.atan2(-axn, (ayn * ayn + azn * azn) ** 0.5)
+        # Roll and pitch from accelerometer
+        roll = math.atan2(ayn, azn)
+        pitch = math.atan2(-axn, (ayn * ayn + azn * azn) ** 0.5)
 
-            # Tilt-compensate magnetometer
-            Xh = mx * math.cos(pitch) + mz * math.sin(pitch)
-            Yh = mx * math.sin(roll) * math.sin(pitch) + my * math.cos(roll) - mz * math.sin(roll) * math.cos(pitch)
+        # Tilt-compensate magnetometer
+        Xh = mx * math.cos(pitch) + mz * math.sin(pitch)
+        Yh = mx * math.sin(roll) * math.sin(pitch) + my * math.cos(roll) - mz * math.sin(roll) * math.cos(pitch)
 
-            if Xh == 0 and Yh == 0:
-                return None
-            heading = math.degrees(math.atan2(Yh, Xh))
-            if heading < 0:
-                heading += 360.0
-            heading = (heading + declination_deg + offset_deg) % 360.0
-            return heading
-        except Exception:
+        if Xh == 0 and Yh == 0:
             return None
+        heading = math.degrees(math.atan2(Yh, Xh))
+        if heading < 0:
+            heading += 360.0
+        heading = (heading + declination_deg + offset_deg) % 360.0
+        return heading
 
 
 class LSM9DS1(IMUBase):
@@ -78,22 +77,15 @@ class LSM9DS1(IMUBase):
     CTRL_REG6_XL = 0x20  # Accel ODR and scale
     OUT_X_L_XL = 0x28
 
-    def __init__(self, bus: int, mag_addr: int, declination_deg: float = 0.0, heading_offset_deg: float = 0.0,
-                 ag_addr: int | None = None):
-        self._busno = bus
+    def __init__(self, bus: int, mag_addr: int, ag_addr: int,
+                 declination_deg: float = 0.0, heading_offset_deg: float = 0.0):
+        super().__init__(bus)
         self._mag_addr = mag_addr
         self._ag_addr = ag_addr
-        self._bus = SMBus(bus)
-        self._decl = float(declination_deg)
-        self._off = float(heading_offset_deg)
+        self._decl = declination_deg
+        self._off = heading_offset_deg
         self._init_mag()
         self._init_ag()
-
-    def close(self) -> None:
-        try:
-            self._bus.close()
-        except Exception:
-            pass
 
     def _write_mag(self, reg: int, val: int) -> None:
         self._bus.write_byte_data(self._mag_addr, reg, val & 0xFF)
@@ -159,11 +151,16 @@ class LSM9DS1(IMUBase):
 
 
 class DummyIMU(IMUBase):
-    pass
+    def __init__(self):
+        pass
+
+    def close(self) -> None:
+        pass
 
 
-def create(config: dict) -> IMUBase:
+def load(config: dict) -> IMUBase:
     model = config.get("imu_model")
+    LOGGER.info(f"Initializing IMU: {model}")
     if model == "LSM9DS1":
         try:
             return LSM9DS1(

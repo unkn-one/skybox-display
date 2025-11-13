@@ -28,16 +28,16 @@ class SystemPage(page.Page):
         )
         self.selected_button: int | None = None
 
-    def render(self, draw: "ImageDraw", stats: dict[str, Any]) -> None:
+    def render(self, draw: "ImageDraw", data: dict[str, Any]) -> None:
         """Render the system information page.
 
         Args:
             draw: PIL ImageDraw object
-            stats: Statistics dictionary
+            data: Statistics dictionary
             x, y: Content area position
             width, height: Content area dimensions
         """
-        system_data = stats.get("system", {})
+        system_data = data.get("system", {})
 
         cpu_vals = system_data.get("cpu")
         mem_vals = system_data.get("mem")

@@ -39,7 +39,7 @@ exec /opt/skybox-display/.venv/bin/skybox-display "$@"
 SH
 chmod 0755 "${STAGE}/usr/bin/${PKG}"
 
-# systemd service (framebuffer)
+# systemd service
 cat > "${STAGE}/lib/systemd/system/${PKG}.service" <<'UNIT'
 [Unit]
 Description=Skybox Display

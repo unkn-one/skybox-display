@@ -20,7 +20,7 @@ class Page:
         self.height = ui.content_height
         self.line_height = 20
 
-    def render(self, draw: "ImageDraw", stats: dict[str, Any]) -> None:
+    def render(self, draw: "ImageDraw", data: dict[str, Any]) -> None:
         pass
 
     def on_next(self) -> bool:

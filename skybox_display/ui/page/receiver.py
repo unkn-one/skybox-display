@@ -16,8 +16,8 @@ class ReceiverPage(page.Page):
     icon = "\ue8bf"
     accent = "receiver_page"
 
-    def render(self, draw: "ImageDraw", stats: dict[str, Any]) -> None:
-        stats_data = stats.get("stats", {})
+    def render(self, draw: "ImageDraw", data: dict[str, Any]) -> None:
+        stats_data = data.get("stats", {})
 
         try:
             # Get last minute stats

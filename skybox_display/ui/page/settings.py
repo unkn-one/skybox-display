@@ -48,7 +48,7 @@ class SettingsPage(page.Page):
             SettingItem("IMU", "imu_model", [None, "LSM9DS1"]),
         )
 
-    def render(self, draw: "ImageDraw", stats: dict[str, Any]) -> None:
+    def render(self, draw: "ImageDraw", data: dict[str, Any]) -> None:
         """Render the Settings page with selection/edit flow."""
         val_x = self.x + self.width/2 + 10
         for i, item in enumerate(self.items):

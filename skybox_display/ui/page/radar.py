@@ -81,7 +81,7 @@ class RadarPage(page.Page):
         draw.text((self.x, self.y + self.height), f"{scale_mode.title()}",
                   font=font.DEFAULT, fill=self.ui.theme.secondary, anchor="ld")
 
-    def render(self, draw: "ImageDraw", stats: dict[str, Any]) -> None:
+    def render(self, draw: "ImageDraw", data: dict[str, Any]) -> None:
         # Refresh scale from config in case it was changed via Settings
         scale_mode = math_utils.ScaleMode(self.ui.config["radar_scale"])
         pad = 4
@@ -89,11 +89,10 @@ class RadarPage(page.Page):
         cy = self.y + self.height // 2
         radius = max(4, min(self.width, self.height) // 2 - pad)
 
-        aircraft_data = stats.get("aircraft", {})
-        aircraft_list = aircraft_data.get("aircraft", [])
-        imu_data = stats.get("imu", {})
+        aircraft_list = data.get("aircraft", [])
+        imu_data = data.get("imu", {})
         imu_heading = imu_data.get("heading")
-        heading_rot = float(imu_heading) % 360.0 if isinstance(imu_heading, (int, float)) else 0.0
+        heading_rot = imu_heading if isinstance(imu_heading, (int, float)) else 0.0
 
         # Collect (distance, bearing, heading, label)
         points = []

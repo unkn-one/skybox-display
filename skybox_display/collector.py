@@ -1,18 +1,37 @@
-import copy
 import logging
 import socket
 import threading
 import time
 from collections import deque
-from typing import Callable, Any
+from dataclasses import dataclass
+from enum import StrEnum, auto
+from typing import Any, Callable, Generic, TypeVar
 
 import psutil
 import requests
 
-from skybox_display import USER_AGENT, concurrency, math_utils, imu as imu_mod
-
+from skybox_display import USER_AGENT, concurrency, math_utils, imu
 
 LOGGER = logging.getLogger(__name__)
+
+TaskResult = TypeVar('TaskResult')
+TaskFn = Callable[[], TaskResult]
+
+
+class TaskStatus(StrEnum):
+    ok = auto()
+    error = auto()
+
+
+@dataclass(slots=True)
+class Task(Generic[TaskResult]):
+    name: str
+    fn: TaskFn[TaskResult]
+    interval: float | None
+    due: float = time.monotonic()
+    result: TaskResult | None = None
+    status: TaskStatus = TaskStatus.ok
+    last_update: float = float("-inf")
 
 
 class DataCollector(concurrency.Threaded):
@@ -22,62 +41,59 @@ class DataCollector(concurrency.Threaded):
         super().__init__()
         self._config = config
         self._lock = threading.Lock()
-        self._stats: dict[str, Any] = {"status": "unknown", "last_update": 0}
-        self._aircraft: dict[str, Any] = {"status": "unknown", "last_update": 0, "aircraft": []}
         self._system: dict[str, Any] = {
             "cpu": deque(maxlen=self._config["system_samples"]),
             "mem": deque(maxlen=self._config["system_samples"]),
             "temp": deque(maxlen=self._config["system_samples"]),
             "ip": "",
         }
-        self._imu_state: dict[str, Any] = {"status": "unknown", "last_update": 0, "heading": None}
-        self._imu_dev = imu_mod.create(self._config)
+        self._imu_dev = imu.load(self._config)
         self._session = requests.Session()
         self._session.headers.update({"User-Agent": USER_AGENT})
         # Task scheduler: name, function, interval, next due time, and optional error target for status marking
         now = time.monotonic()
-        self._tasks: list[dict[str, Any]] = [
-            {
-                "name": "receiver",
-                "fn": self.update_receiver,
-                "interval": None,
-                "due": now,
-                "error_target": None,
-            },
-            {
-                "name": "imu",
-                "fn": self.update_imu,
-                "interval": self._config.get("imu_poll_interval", 0.5) if self._config.get("imu_model") else None,
-                "due": now,
-                "error_target": "imu",
-            },
-            {
-                "name": "aircraft",
-                "fn": self.update_aircraft,
-                "interval": self._config["aircraft_poll_interval"],
-                "due": now,
-                "error_target": "aircraft",
-            },
-            {
-                "name": "stats",
-                "fn": self.update_stats,
-                "interval": self._config["status_poll_interval"],
-                "due": now,
-                "error_target": "stats",
-            },
-            {
-                "name": "system",
-                "fn": self.update_system,
-                "interval": self._config["system_poll_interval"],
-                "due": now,
-                "error_target": None,
-            },
-        ]
+        self._tasks: dict[str, Task] = {
+            "aircraft": Task[list](
+                name="aircraft",
+                fn=self.update_aircraft,
+                interval=self._config["aircraft_poll_interval"],
+                due=now,
+            ),
+            "stats": Task[dict[str, Any]](
+                name="stats",
+                fn=self.update_stats,
+                interval=self._config["status_poll_interval"],
+                due=now,
+            ),
+            "receiver": Task[None](
+                name="receiver",
+                fn=self.update_receiver,
+                interval=None,
+                due=now,
+            ),
+            "system": Task[dict[str, Any]](
+                name="system",
+                fn=self.update_system,
+                interval=self._config["system_poll_interval"],
+                due=now,
+            ),
+            "imu": Task[dict[str, Any]](
+                name="imu",
+                fn=self.update_imu,
+                interval=self._config["imu_poll_interval"],
+                due=now,
+            ),
+        }
+
+    def get_data(self, task_name) -> Any:
+        with self._lock:
+            return self._tasks[task_name].result
 
     def _clean(self):
-        """Close shared HTTP resources."""
+        """Clean up resources."""
         try:
             self._session.close()
+            self._imu_dev.close()
         except Exception as e:
             LOGGER.exception(e)
 
@@ -86,55 +102,38 @@ class DataCollector(concurrency.Threaded):
         now = time.monotonic()
         next_due = float("inf")
 
-        for t in self._tasks:
-            due = t["due"]
-            interval = t.get("interval")
-            if now >= due:
-                self._run_task(t["name"], t["fn"], t.get("error_target"))
-                if interval is None:
+        for t in self._tasks.values():
+            if now >= t.due:
+                self._run_task(t)
+                if t.interval is None:
                     # One-time task: disable further runs
-                    t["due"] = float("inf")
+                    t.due = float("inf")
                 else:
                     # Advance due by whole intervals to avoid drift/catch-up storms
-                    interval_f = float(interval)
-                    intervals = max(1, int((now - due) // interval_f) + 1)
-                    t["due"] = due + intervals * interval_f
-            next_due = min(next_due, t["due"])
+                    intervals = max(1, int((now - t.due) // t.interval) + 1)
+                    t.due = t.due + intervals * t.interval
+            next_due = min(next_due, t.due)
 
         # Sleep until the earliest next due, bounded for responsiveness
         sleep_for = max(0.01, min(0.25, next_due - time.monotonic()))
         self._stop_ev.wait(sleep_for)
 
-    def _run_task(self, name: str, fn: Callable[[], None], error_target: str | None) -> None:
+    def _run_task(self, task: Task) -> None:
         """Run a polling task with unified error handling and status marking."""
         try:
-            fn()
-        except requests.RequestException as e:
-            LOGGER.error(f"{name.capitalize()} update failed: {e}")
-            if error_target:
-                with self._lock:
-                    if error_target == "aircraft":
-                        self._aircraft["status"] = "error"
-                    elif error_target == "stats":
-                        self._stats["status"] = "error"
-                    elif error_target == "imu":
-                        self._imu_state["status"] = "error"
-                        self._imu_state["last_update"] = time.time()
+            LOGGER.debug(f"Running '{task.name}' task")
+            task.result = task.fn()
+            task.last_update = time.time()
+            task.status = TaskStatus.ok
+        except Exception as e:
+            LOGGER.error(f"Task '{task.name}' update failed: {e}")
+            task.status = TaskStatus.error
 
-    def update_imu(self) -> None:
+    def update_imu(self) -> dict[str, Any]:
         """Update IMU heading if device is available."""
-        if not self._config.get("imu_enabled"):
-            return
-        try:
-            heading = self._imu_dev.read_heading() if self._imu_dev else None
-        except Exception:
-            heading = None
-        with self._lock:
-            self._imu_state["heading"] = heading
-            self._imu_state["status"] = "ok" if heading is not None else "unknown"
-            self._imu_state["last_update"] = time.time()
+        return {"heading": self._imu_dev.read_heading()}
 
-    def update_receiver(self):
+    def update_receiver(self) -> None:
         """Update dump1090 receiver info."""
         r = self._session.get(self._config["receiver_url"], timeout=self._config["timeout"])
         r.raise_for_status()
@@ -147,19 +146,15 @@ class DataCollector(concurrency.Threaded):
         if not self._config["radio_lon"] and lon is not None:
             self._config["radio_lon"] = lon
         if refresh is not None:
-            self._config["aircraft_poll_interval"] = refresh / 1000
+            self._tasks["aircraft"].interval = self._config["aircraft_poll_interval"] = refresh / 1000
 
-    def update_stats(self) -> None:
+    def update_stats(self) -> dict[str, Any]:
         """Update dump1090 statistics."""
         r = self._session.get(self._config["stats_url"], timeout=self._config["timeout"])
         r.raise_for_status()
-        data = r.json()
-        with self._lock:
-            self._stats = data
-            self._stats["status"] = "ok"
-            self._stats["last_update"] = time.time()
+        return r.json()
 
-    def update_aircraft(self) -> None:
+    def update_aircraft(self) -> list:
         """Update dump1090 aircraft data."""
         r = self._session.get(self._config["aircraft_url"], timeout=self._config["timeout"])
         r.raise_for_status()
@@ -176,23 +171,21 @@ class DataCollector(concurrency.Threaded):
                 )
                 aircraft["distance_km"] = distance
 
-        with self._lock:
-            self._aircraft = data
-            self._aircraft["status"] = "ok"
-            self._aircraft["last_update"] = time.time()
+        return aircraft_list
 
-    def update_system(self) -> None:
+    def update_system(self) -> dict[str, Any]:
         """Update system statistics (CPU, memory, temperature)."""
         cpu = psutil.cpu_percent()
         mem = psutil.virtual_memory().percent
         temp = self._get_temperature()
         ip = self._get_primary_ip()
 
-        with self._lock:
-            self._system["cpu"].append(cpu)
-            self._system["mem"].append(mem)
-            self._system["temp"].append(temp)
-            self._system["ip"] = ip
+        self._system["cpu"].append(cpu)
+        self._system["mem"].append(mem)
+        self._system["temp"].append(temp)
+        self._system["ip"] = ip
+
+        return self._system
 
     def _get_temperature(self) -> float:
         """Get system temperature."""
@@ -217,14 +210,4 @@ class DataCollector(concurrency.Threaded):
     def snapshot(self) -> dict[str, Any]:
         """Get a thread-safe snapshot of all collected data."""
         with self._lock:
-            return {
-                "stats": copy.deepcopy(self._stats),
-                "aircraft": copy.deepcopy(self._aircraft),
-                "system": {
-                    "cpu": list(self._system["cpu"]),
-                    "mem": list(self._system["mem"]),
-                    "temp": list(self._system["temp"]),
-                    "ip": self._system["ip"],
-                },
-                "imu": copy.deepcopy(self._imu_state),
-            }
+            return {name: task.result for name, task in self._tasks.items() if task.result is not None}
